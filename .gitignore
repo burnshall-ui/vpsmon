@@ -1,0 +1,5 @@
+zig-out/
+.zig-cache/
+/tmp/
+*.png
+!assets/screenshot.png
