@@ -3,3 +3,4 @@ zig-out/
 /tmp/
 *.png
 !assets/screenshot.png
+send_status.sh
