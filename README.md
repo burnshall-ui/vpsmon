@@ -105,10 +105,10 @@ cp send_status.sh.example send_status.sh
 
 vpsmon ships with an [OpenClaw](https://openclaw.ai) skill definition. To use it:
 
-1. Copy `openclaw/SKILL.md` to your OpenClaw workspace skills directory:
+1. Copy `SKILL.md` to your OpenClaw workspace skills directory:
    ```bash
    mkdir -p ~/.openclaw/workspace/skills/vpsmon
-   cp openclaw/SKILL.md ~/.openclaw/workspace/skills/vpsmon/SKILL.md
+   cp SKILL.md ~/.openclaw/workspace/skills/vpsmon/SKILL.md
    ```
 
 2. Add exec approval for your agent:
@@ -133,8 +133,7 @@ vpsmon/
 │   └── main.zig          # Core monitor — reads /proc/, outputs ASCII
 ├── render.sh              # Renders ASCII to PNG via ImageMagick/Pango
 ├── send_status.sh.example # Template: render + send via Telegram
-├── openclaw/
-│   └── SKILL.md           # OpenClaw agent skill definition
+├── SKILL.md               # OpenClaw agent skill definition
 ├── assets/
 │   └── screenshot.png     # Example output
 ├── build.zig              # Zig build configuration
