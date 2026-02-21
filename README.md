@@ -1,6 +1,8 @@
 # vpsmon
 
-A fast, zero-dependency VPS system monitor written in **Zig**. Reads metrics directly from `/proc/` and renders a hacker-style ASCII dashboard — optionally as a PNG image with green-on-black terminal aesthetics.
+A fast, zero-dependency VPS system monitor written in **Zig**. Reads metrics directly from `/proc/` and renders a hacker-style ASCII dashboard.
+
+**The main purpose of this tool is to send a visual image of your system status instead of a plain text message.** It generates a PNG image with green-on-black terminal aesthetics — perfect for Telegram, WhatsApp, or Discord bot integrations.
 
 ![screenshot](assets/screenshot.png)
 
