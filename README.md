@@ -158,7 +158,6 @@ vpsmon reads Linux system metrics directly from the `/proc` filesystem:
 | Uptime | `/proc/uptime` |
 | Processes | `/proc/[pid]/stat` + `/proc/[pid]/cmdline` |
 
-No external dependencies at runtime. The binary is fully self-contained.
 
 Image rendering uses ImageMagick's Pango backend for proper monospace font rendering with UTF-8 support.
 
