@@ -28,7 +28,7 @@ pub fn renderDashboardToPng(allocator: std.mem.Allocator, ascii_text: []const u8
 
     // 2. Bild erstellen und mit Schwarz füllen
     var img = try zigimg.Image.create(allocator, img_width, img_height, .rgba32);
-    defer img.deinit();
+    defer img.deinit(allocator);
     
     for (img.pixels.rgba32) |*pixel| {
         pixel.* = BG_COLOR;
