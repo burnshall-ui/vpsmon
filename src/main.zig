@@ -70,7 +70,27 @@ fn getMem() !MemInfo {
     };
 }
 
-const Statfs = extern struct {
+const builtin = @import("builtin");
+
+const Statfs = if (builtin.os.tag == .macos) extern struct {
+    f_bsize: u32,
+    f_iosize: i32,
+    f_blocks: u64,
+    f_bfree: u64,
+    f_bavail: u64,
+    f_files: u64,
+    f_ffree: u64,
+    f_fsid: [2]i32,
+    f_owner: u32,
+    f_type: u32,
+    f_flags: u32,
+    f_fssubtype: u32,
+    f_fstypename: [16]u8,
+    f_mntonname: [1024]u8,
+    f_mntfromname: [1024]u8,
+    f_flags_ext: u32,
+    f_reserved: [7]u32,
+} else extern struct {
     f_type: i64,
     f_bsize: i64,
     f_blocks: u64,
@@ -89,7 +109,7 @@ extern "c" fn statfs(path: [*:0]const u8, buf: *Statfs) callconv(.c) c_int;
 fn getDisk() !DiskInfo {
     var s: Statfs = undefined;
     if (statfs("/", &s) != 0) return error.StatfsFailed;
-    const bs = @as(u64, @intCast(s.f_frsize));
+    const bs: u64 = if (builtin.os.tag == .macos) s.f_bsize else @intCast(s.f_frsize);
     const tg = @as(f64, @floatFromInt(s.f_blocks)) * @as(f64, @floatFromInt(bs)) / (1024 * 1024 * 1024);
     const fg = @as(f64, @floatFromInt(s.f_bavail)) * @as(f64, @floatFromInt(bs)) / (1024 * 1024 * 1024);
     return DiskInfo{ .used_gb = tg - fg, .total_gb = tg, .pct = if (tg > 0) (tg - fg) / tg * 100 else 0 };
@@ -360,7 +380,7 @@ pub fn main() !void {
         std.debug.print("Dashboard saved to {s}\n", .{out_path});
     } else {
         // Terminal Modus
-        const stdout = std.io.getStdOut().writer();
+        const stdout = std.fs.File.stdout();
         try stdout.writeAll(dashboard_buffer.items);
     }
 }
