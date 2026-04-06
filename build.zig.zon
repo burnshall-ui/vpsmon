@@ -5,7 +5,7 @@
     .dependencies = .{
         .zigimg = .{
             .url = "https://github.com/zigimg/zigimg/archive/refs/heads/master.tar.gz",
-            .hash = "12200000000000000000000000000000000000000000000000000000000000000000",
+            .hash = "12203e4b6e121fbc7b36994f8a2d046c842251f0eb8a6800eabccd4058292b56820c",
         },
     },
     .paths = .{
