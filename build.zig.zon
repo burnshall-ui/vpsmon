@@ -1,6 +1,7 @@
 .{
     .name = .vpsmon,
     .version = "1.0.0",
+    .fingerprint = 0xe481c38628f84a1b,
     .dependencies = .{
         .zigimg = .{
             .url = "https://github.com/zigimg/zigimg/archive/refs/heads/main.tar.gz",
