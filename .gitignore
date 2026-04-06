@@ -4,3 +4,4 @@ zig-out/
 *.png
 !assets/screenshot.png
 send_status.sh
+FUTURE-zig-rendering.md

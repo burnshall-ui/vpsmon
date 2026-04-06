@@ -12,6 +12,12 @@ pub fn build(b: *std.Build) void {
     });
     exe.linkLibC();
 
+    const zigimg = b.dependency("zigimg", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    exe.root_module.addImport("zigimg", zigimg.module("zigimg"));
+
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);

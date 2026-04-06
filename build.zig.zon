@@ -1,7 +1,12 @@
 .{
     .name = "vpsmon",
     .version = "1.0.0",
-    .dependencies = .{},
+    .dependencies = .{
+        .zigimg = .{
+            .url = "https://github.com/zigimg/zigimg/archive/refs/heads/main.tar.gz",
+            .hash = "12200000000000000000000000000000000000000000000000000000000000000000",
+        },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

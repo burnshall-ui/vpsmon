@@ -71,9 +71,18 @@ fn getMem() !MemInfo {
 }
 
 const Statfs = extern struct {
-    f_type: i64, f_bsize: i64, f_blocks: u64, f_bfree: u64, f_bavail: u64,
-    f_files: u64, f_ffree: u64, f_fsid: [2]i32, f_namelen: i64, f_frsize: i64,
-    f_flags: i64, f_spare: [4]i64,
+    f_type: i64,
+    f_bsize: i64,
+    f_blocks: u64,
+    f_bfree: u64,
+    f_bavail: u64,
+    f_files: u64,
+    f_ffree: u64,
+    f_fsid: [2]i32,
+    f_namelen: i64,
+    f_frsize: i64,
+    f_flags: i64,
+    f_spare: [4]i64,
 };
 extern "c" fn statfs(path: [*:0]const u8, buf: *Statfs) callconv(.C) c_int;
 
@@ -182,7 +191,9 @@ fn getProcs(procs: []Process) !usize {
         }
     }
     mem.sort(Process, procs[0..count], {}, struct {
-        fn lt(_: void, a: Process, b: Process) bool { return a.mem_mb > b.mem_mb; }
+        fn lt(_: void, a: Process, b: Process) bool {
+            return a.mem_mb > b.mem_mb;
+        }
     }.lt);
     return @min(count, 5);
 }
@@ -226,9 +237,7 @@ fn printRule(w: anytype, left: u8, fill: u8, right: u8, title: []const u8) !void
     try w.writeByte('\n');
 }
 
-pub fn main() !void {
-    const w = std.io.getStdOut().writer();
-
+pub fn gatherAndPrintStats(w: anytype) !void {
     const cpu = getCpu() catch CpuInfo{ .usage_pct = 0 };
     const memory = getMem() catch MemInfo{ .used_gb = 0, .total_gb = 0, .pct = 0 };
     const disk = getDisk() catch DiskInfo{ .used_gb = 0, .total_gb = 0, .pct = 0 };
@@ -328,4 +337,29 @@ pub fn main() !void {
 
     try w.writeAll("|                                                          |\n");
     try printRule(w, '+', '-', '+', "");
+}
+
+pub fn main() !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var dashboard_buffer = std.ArrayList(u8).init(allocator);
+    const w = dashboard_buffer.writer();
+
+    try gatherAndPrintStats(w);
+
+    var args = try std.process.argsWithAllocator(allocator);
+    _ = args.next(); // skip exe name
+    
+    if (args.next()) |out_path| {
+        // PNG Modus
+        const renderer = @import("renderer.zig");
+        try renderer.renderDashboardToPng(allocator, dashboard_buffer.items, out_path);
+        std.debug.print("Dashboard saved to {s}\n", .{out_path});
+    } else {
+        // Terminal Modus
+        const stdout = std.io.getStdOut().writer();
+        try stdout.writeAll(dashboard_buffer.items);
+    }
 }
