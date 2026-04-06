@@ -344,8 +344,9 @@ pub fn main() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var dashboard_buffer = std.ArrayList(u8).init(allocator);
-    const w = dashboard_buffer.writer();
+    var dashboard_buffer = std.ArrayList(u8).empty;
+    defer dashboard_buffer.deinit(allocator);
+    const w = dashboard_buffer.writer(allocator);
 
     try gatherAndPrintStats(w);
 
