@@ -67,5 +67,6 @@ pub fn renderDashboardToPng(allocator: std.mem.Allocator, ascii_text: []const u8
     }
 
     // 4. Als PNG speichern
-    try img.writeToFilePath(out_path, .{ .png = .{} });
+    var write_buffer: [8192]u8 = undefined;
+    try img.writeToFilePath(allocator, out_path, &write_buffer, .{ .png = .{} });
 }
