@@ -84,7 +84,7 @@ const Statfs = extern struct {
     f_flags: i64,
     f_spare: [4]i64,
 };
-extern "c" fn statfs(path: [*:0]const u8, buf: *Statfs) callconv(.C) c_int;
+extern "c" fn statfs(path: [*:0]const u8, buf: *Statfs) callconv(.c) c_int;
 
 fn getDisk() !DiskInfo {
     var s: Statfs = undefined;
