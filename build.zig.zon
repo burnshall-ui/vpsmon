@@ -1,5 +1,5 @@
 .{
-    .name = "vpsmon",
+    .name = .vpsmon,
     .version = "1.0.0",
     .dependencies = .{
         .zigimg = .{
