@@ -17,11 +17,8 @@ const Process = struct {
     mem_mb: f64 = 0,
 };
 
-fn readFile(path: []const u8, buf: []u8) ![]u8 {
-    const file = try fs.openFileAbsolute(path, .{});
-    defer file.close();
-    const n = try file.readAll(buf);
-    return buf[0..n];
+fn readFile(io: std.Io, path: []const u8, buf: []u8) ![]u8 {
+    return std.Io.Dir.cwd().readFile(io, path, buf);
 }
 
 fn parseKb(line: []const u8) u64 {
@@ -30,9 +27,9 @@ fn parseKb(line: []const u8) u64 {
     return fmt.parseUnsigned(u64, t.next() orelse return 0, 10) catch 0;
 }
 
-fn getCpu() !CpuInfo {
+fn getCpu(io: std.Io) !CpuInfo {
     var buf: [4096]u8 = undefined;
-    const data = try readFile("/proc/stat", &buf);
+    const data = try readFile(io, "/proc/stat", &buf);
     var lines_iter = mem.splitScalar(u8, data, '\n');
     const first = lines_iter.first();
     if (!mem.startsWith(u8, first, "cpu ")) return error.ParseError;
@@ -52,9 +49,9 @@ fn getCpu() !CpuInfo {
     return CpuInfo{ .usage_pct = @as(f64, @floatFromInt(total - idle)) / @as(f64, @floatFromInt(total)) * 100.0 };
 }
 
-fn getMem() !MemInfo {
+fn getMem(io: std.Io) !MemInfo {
     var buf: [8192]u8 = undefined;
-    const data = try readFile("/proc/meminfo", &buf);
+    const data = try readFile(io, "/proc/meminfo", &buf);
     var tk: u64 = 0;
     var ak: u64 = 0;
     var lines = mem.splitScalar(u8, data, '\n');
@@ -75,7 +72,7 @@ const Statfs = extern struct {
     f_files: u64, f_ffree: u64, f_fsid: [2]i32, f_namelen: i64, f_frsize: i64,
     f_flags: i64, f_spare: [4]i64,
 };
-extern "c" fn statfs(path: [*:0]const u8, buf: *Statfs) callconv(.C) c_int;
+extern "c" fn statfs(path: [*:0]const u8, buf: *Statfs) callconv(.c) c_int;
 
 fn getDisk() !DiskInfo {
     var s: Statfs = undefined;
@@ -86,9 +83,9 @@ fn getDisk() !DiskInfo {
     return DiskInfo{ .used_gb = tg - fg, .total_gb = tg, .pct = if (tg > 0) (tg - fg) / tg * 100 else 0 };
 }
 
-fn getNet() !NetInfo {
+fn getNet(io: std.Io) !NetInfo {
     var buf: [8192]u8 = undefined;
-    const data = try readFile("/proc/net/dev", &buf);
+    const data = try readFile(io, "/proc/net/dev", &buf);
     var rx: u64 = 0;
     var tx: u64 = 0;
     var lines = mem.splitScalar(u8, data, '\n');
@@ -108,9 +105,9 @@ fn getNet() !NetInfo {
     return NetInfo{ .rx_mb = @as(f64, @floatFromInt(rx)) / (1024 * 1024), .tx_mb = @as(f64, @floatFromInt(tx)) / (1024 * 1024) };
 }
 
-fn getLoad() !LoadInfo {
+fn getLoad(io: std.Io) !LoadInfo {
     var buf: [256]u8 = undefined;
-    const data = try readFile("/proc/loadavg", &buf);
+    const data = try readFile(io, "/proc/loadavg", &buf);
     var f = mem.tokenizeScalar(u8, data, ' ');
     return LoadInfo{
         .one = fmt.parseFloat(f64, f.next() orelse return error.ParseError) catch 0,
@@ -119,9 +116,9 @@ fn getLoad() !LoadInfo {
     };
 }
 
-fn getUptime() !UptimeInfo {
+fn getUptime(io: std.Io) !UptimeInfo {
     var buf: [256]u8 = undefined;
-    const data = try readFile("/proc/uptime", &buf);
+    const data = try readFile(io, "/proc/uptime", &buf);
     var tok = mem.tokenizeScalar(u8, data, ' ');
     const s_str = tok.next() orelse return error.ParseError;
     const dot = mem.indexOf(u8, s_str, ".") orelse s_str.len;
@@ -129,14 +126,14 @@ fn getUptime() !UptimeInfo {
     return UptimeInfo{ .days = s / 86400, .hours = (s % 86400) / 3600, .minutes = (s % 3600) / 60 };
 }
 
-fn getProcs(procs: []Process) !usize {
-    var dir = fs.openDirAbsolute("/proc", .{ .iterate = true }) catch return 0;
-    defer dir.close();
+fn getProcs(io: std.Io, procs: []Process) !usize {
+    var dir = std.Io.Dir.openDirAbsolute(io, "/proc", .{ .iterate = true }) catch return 0;
+    defer dir.close(io);
     var count: usize = 0;
     var sbuf: [4096]u8 = undefined;
     var cbuf: [256]u8 = undefined;
     var iter = dir.iterate();
-    while (iter.next() catch null) |entry| {
+    while (iter.next(io) catch null) |entry| {
         if (entry.kind != .directory) continue;
         const is_pid = blk: {
             for (entry.name) |c| if (c < '0' or c > '9') break :blk false;
@@ -147,11 +144,11 @@ fn getProcs(procs: []Process) !usize {
         var pb: [80]u8 = undefined;
         // Skip kernel threads (empty cmdline)
         const cp = fmt.bufPrint(&pb, "/proc/{s}/cmdline", .{entry.name}) catch continue;
-        const cd = readFile(cp, &cbuf) catch continue;
+        const cd = readFile(io, cp, &cbuf) catch continue;
         if (cd.len == 0) continue;
 
         const sp = fmt.bufPrint(&pb, "/proc/{s}/stat", .{entry.name}) catch continue;
-        const sd = readFile(sp, &sbuf) catch continue;
+        const sd = readFile(io, sp, &sbuf) catch continue;
         const op = mem.indexOf(u8, sd, "(") orelse continue;
         const clp = mem.lastIndexOf(u8, sd, ")") orelse continue;
         if (clp <= op or clp + 2 >= sd.len) continue;
@@ -227,17 +224,23 @@ fn printRule(w: anytype, left: u8, fill: u8, right: u8, title: []const u8) !void
 }
 
 pub fn main() !void {
-    const w = std.io.getStdOut().writer();
+    var threaded: std.Io.Threaded = .init(std.heap.page_allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
 
-    const cpu = getCpu() catch CpuInfo{ .usage_pct = 0 };
-    const memory = getMem() catch MemInfo{ .used_gb = 0, .total_gb = 0, .pct = 0 };
+    var out_buf: [16384]u8 = undefined;
+    var out_writer: std.Io.Writer = .fixed(&out_buf);
+    const w = &out_writer;
+
+    const cpu = getCpu(io) catch CpuInfo{ .usage_pct = 0 };
+    const memory = getMem(io) catch MemInfo{ .used_gb = 0, .total_gb = 0, .pct = 0 };
     const disk = getDisk() catch DiskInfo{ .used_gb = 0, .total_gb = 0, .pct = 0 };
-    const net = getNet() catch NetInfo{ .rx_mb = 0, .tx_mb = 0 };
-    const load = getLoad() catch LoadInfo{ .one = 0, .five = 0, .fifteen = 0 };
-    const uptime = getUptime() catch UptimeInfo{ .days = 0, .hours = 0, .minutes = 0 };
+    const net = getNet(io) catch NetInfo{ .rx_mb = 0, .tx_mb = 0 };
+    const load = getLoad(io) catch LoadInfo{ .one = 0, .five = 0, .fifteen = 0 };
+    const uptime = getUptime(io) catch UptimeInfo{ .days = 0, .hours = 0, .minutes = 0 };
     var procs: [128]Process = undefined;
     for (&procs) |*p| p.* = Process{};
-    const top_n = getProcs(&procs) catch 0;
+    const top_n = getProcs(io, &procs) catch 0;
 
     try printRule(w, '+', '-', '+', "[ SYSTEM STATUS ]");
     try w.writeAll("|                                                          |\n");
@@ -245,32 +248,32 @@ pub fn main() !void {
     // CPU
     {
         var b: [256]u8 = undefined;
-        var s = std.io.fixedBufferStream(&b);
-        const sw = s.writer();
+        var s: std.Io.Writer = .fixed(&b);
+        const sw = &s;
         try sw.writeAll("  [");
         try printBar(sw, cpu.usage_pct, 16);
-        try fmt.format(sw, "]  CPU  {d:5.1}%", .{cpu.usage_pct});
-        try printPadded(w, s.getWritten());
+        try sw.print("]  CPU  {d:5.1}%", .{cpu.usage_pct});
+        try printPadded(w, s.buffered());
     }
     // RAM
     {
         var b: [256]u8 = undefined;
-        var s = std.io.fixedBufferStream(&b);
-        const sw = s.writer();
+        var s: std.Io.Writer = .fixed(&b);
+        const sw = &s;
         try sw.writeAll("  [");
         try printBar(sw, memory.pct, 16);
-        try fmt.format(sw, "]  RAM  {d:5.1}%  {d:.1}/{d:.0} GB", .{ memory.pct, memory.used_gb, memory.total_gb });
-        try printPadded(w, s.getWritten());
+        try sw.print("]  RAM  {d:5.1}%  {d:.1}/{d:.0} GB", .{ memory.pct, memory.used_gb, memory.total_gb });
+        try printPadded(w, s.buffered());
     }
     // DISK
     {
         var b: [256]u8 = undefined;
-        var s = std.io.fixedBufferStream(&b);
-        const sw = s.writer();
+        var s: std.Io.Writer = .fixed(&b);
+        const sw = &s;
         try sw.writeAll("  [");
         try printBar(sw, disk.pct, 16);
-        try fmt.format(sw, "]  DISK {d:5.1}%  {d:.0}/{d:.0} GB", .{ disk.pct, disk.used_gb, disk.total_gb });
-        try printPadded(w, s.getWritten());
+        try sw.print("]  DISK {d:5.1}%  {d:.0}/{d:.0} GB", .{ disk.pct, disk.used_gb, disk.total_gb });
+        try printPadded(w, s.buffered());
     }
 
     try w.writeAll("|                                                          |\n");
@@ -278,28 +281,28 @@ pub fn main() !void {
     // NET
     {
         var b: [256]u8 = undefined;
-        var s = std.io.fixedBufferStream(&b);
-        const sw = s.writer();
+        var s: std.Io.Writer = .fixed(&b);
+        const sw = &s;
         if (net.tx_mb > 1024) {
-            try fmt.format(sw, "  NET   ^ {d:.1} GB    v {d:.1} GB   (total)", .{ net.tx_mb / 1024, net.rx_mb / 1024 });
+            try sw.print("  NET   ^ {d:.1} GB    v {d:.1} GB   (total)", .{ net.tx_mb / 1024, net.rx_mb / 1024 });
         } else {
-            try fmt.format(sw, "  NET   ^ {d:.0} MB    v {d:.0} MB   (total)", .{ net.tx_mb, net.rx_mb });
+            try sw.print("  NET   ^ {d:.0} MB    v {d:.0} MB   (total)", .{ net.tx_mb, net.rx_mb });
         }
-        try printPadded(w, s.getWritten());
+        try printPadded(w, s.buffered());
     }
     // LOAD
     {
         var b: [256]u8 = undefined;
-        var s = std.io.fixedBufferStream(&b);
-        try fmt.format(s.writer(), "  LOAD    {d:.2}   {d:.2}   {d:.2}", .{ load.one, load.five, load.fifteen });
-        try printPadded(w, s.getWritten());
+        var s: std.Io.Writer = .fixed(&b);
+        try s.print("  LOAD    {d:.2}   {d:.2}   {d:.2}", .{ load.one, load.five, load.fifteen });
+        try printPadded(w, s.buffered());
     }
     // UPTIME
     {
         var b: [256]u8 = undefined;
-        var s = std.io.fixedBufferStream(&b);
-        try fmt.format(s.writer(), "  UPTIME  {d}d {d}h {d}m", .{ uptime.days, uptime.hours, uptime.minutes });
-        try printPadded(w, s.getWritten());
+        var s: std.Io.Writer = .fixed(&b);
+        try s.print("  UPTIME  {d}d {d}h {d}m", .{ uptime.days, uptime.hours, uptime.minutes });
+        try printPadded(w, s.buffered());
     }
 
     try w.writeAll("|                                                          |\n");
@@ -309,8 +312,8 @@ pub fn main() !void {
     var pi: usize = 0;
     while (pi < top_n) : (pi += 1) {
         var b: [256]u8 = undefined;
-        var s = std.io.fixedBufferStream(&b);
-        const sw = s.writer();
+        var s: std.Io.Writer = .fixed(&b);
+        const sw = &s;
         const p = procs[pi];
         const name = p.name[0..p.name_len];
         const show_len = @min(name.len, 28);
@@ -319,13 +322,15 @@ pub fn main() !void {
         var ni: usize = show_len;
         while (ni < 28) : (ni += 1) try sw.writeByte('.');
         if (p.mem_mb >= 1024) {
-            try fmt.format(sw, " {d:7.1} GB", .{p.mem_mb / 1024});
+            try sw.print(" {d:7.1} GB", .{p.mem_mb / 1024});
         } else {
-            try fmt.format(sw, " {d:7.0} MB", .{p.mem_mb});
+            try sw.print(" {d:7.0} MB", .{p.mem_mb});
         }
-        try printPadded(w, s.getWritten());
+        try printPadded(w, s.buffered());
     }
 
     try w.writeAll("|                                                          |\n");
     try printRule(w, '+', '-', '+', "");
+
+    try std.Io.File.stdout().writeStreamingAll(io, out_writer.buffered());
 }

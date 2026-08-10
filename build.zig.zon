@@ -1,6 +1,8 @@
 .{
-    .name = "vpsmon",
+    .name = .vpsmon,
     .version = "1.0.0",
+    .fingerprint = 0xe481c386983434c8,
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{},
     .paths = .{
         "build.zig",
