@@ -21,7 +21,7 @@ A fast, zero-dependency VPS system monitor written in **Zig**. Reads metrics dir
 ## Requirements
 
 ### Build
-- [Zig](https://ziglang.org/download/) >= 0.13.0
+- [Zig](https://ziglang.org/download/) >= 0.16.0
 
 ### Image rendering (optional)
 - [ImageMagick](https://imagemagick.org/) with Pango support
@@ -51,11 +51,12 @@ zig build -Doptimize=ReleaseFast
 zig build run
 ```
 
-The binary is at `zig-out/bin/vpsmon` (~1.4 MB release build, statically linked).
+The binary is at `zig-out/bin/vpsmon` (statically linked; ~0.5 MB after `strip`).
 
 ### Install to PATH
 
 ```bash
+strip zig-out/bin/vpsmon
 cp zig-out/bin/vpsmon ~/.local/bin/
 ```
 
