@@ -8,13 +8,14 @@ A fast, zero-dependency VPS system monitor written in **Zig**. Reads metrics dir
 
 ## Features
 
-- **CPU** usage with visual bar
+- **CPU** usage with visual bar (sampled over a 500 ms window)
 - **RAM** usage (used / total)
 - **Disk** usage (used / total)
 - **Network** traffic (total RX/TX)
 - **Load** average (1/5/15 min)
 - **Uptime** (days, hours, minutes)
 - **Top 5 processes** by memory usage (user-space only, no kernel threads)
+- **AI token usage** — last-24h [OpenClaw](https://openclaw.ai) token consumption (input / output / cache, model calls)
 - **PNG rendering** via ImageMagick/Pango — hacker green (`#00FF41`) on black
 - **Telegram integration** — one-command render + send via Bot API
 
@@ -77,6 +78,11 @@ vpsmon
 |   NET   ^ 2.9 GB    v 14.3 GB   (total)                  |
 |   LOAD    0.76   0.63   0.51                             |
 |   UPTIME  7d 9h 6m                                       |
+|                                                          |
++--------------------[ AI / OPENCLAW ]---------------------+
+|                                                          |
+|   TOKENS  5.1M / 24h   (20 calls)                        |
+|           in 1.9M   out 58.3k   cache 3.0M               |
 |                                                          |
 +--------------------[ TOP PROCESSES ]---------------------+
 |                                                          |
@@ -158,6 +164,11 @@ vpsmon reads Linux system metrics directly from the `/proc` filesystem:
 | Load | `/proc/loadavg` |
 | Uptime | `/proc/uptime` |
 | Processes | `/proc/[pid]/stat` + `/proc/[pid]/cmdline` |
+| AI tokens | `~/.openclaw/agents/*/sessions/*.trajectory.jsonl` |
+
+CPU usage is computed from the delta of two `/proc/stat` snapshots taken 500 ms apart (the raw counters are cumulative since boot).
+
+The AI section sums the `model.completed` events of the last 24 hours from OpenClaw's trajectory logs. If no OpenClaw installation is present, the section shows "no model calls in the last 24h".
 
 
 Image rendering uses ImageMagick's Pango backend for proper monospace font rendering with UTF-8 support.

@@ -11,6 +11,7 @@ const DiskInfo = struct { used_gb: f64, total_gb: f64, pct: f64 };
 const NetInfo = struct { rx_mb: f64, tx_mb: f64 };
 const LoadInfo = struct { one: f64, five: f64, fifteen: f64 };
 const UptimeInfo = struct { days: u64, hours: u64, minutes: u64 };
+const AiInfo = struct { total: u64, input: u64, output: u64, cache: u64, calls: u64 };
 const Process = struct {
     name: [128]u8 = [_]u8{0} ** 128,
     name_len: usize = 0,
@@ -90,6 +91,8 @@ const Statfs = extern struct {
 };
 extern "c" fn statfs(path: [*:0]const u8, buf: *Statfs) callconv(.c) c_int;
 extern "c" fn getpagesize() callconv(.c) c_int;
+extern "c" fn time(tloc: ?*i64) callconv(.c) i64;
+extern "c" fn getenv(name: [*:0]const u8) callconv(.c) ?[*:0]const u8;
 
 fn getDisk() !DiskInfo {
     var s: Statfs = undefined;
@@ -141,6 +144,87 @@ fn getUptime(io: std.Io) !UptimeInfo {
     const dot = mem.indexOf(u8, s_str, ".") orelse s_str.len;
     const s = fmt.parseUnsigned(u64, s_str[0..dot], 10) catch 0;
     return UptimeInfo{ .days = s / 86400, .hours = (s % 86400) / 3600, .minutes = (s % 3600) / 60 };
+}
+
+fn daysFromCivil(y: i64, m: i64, d: i64) i64 {
+    const yy = if (m <= 2) y - 1 else y;
+    const era = @divFloor(yy, 400);
+    const yoe = yy - era * 400;
+    const mp = @mod(m + 9, 12);
+    const doy = @divTrunc(153 * mp + 2, 5) + d - 1;
+    const doe = yoe * 365 + @divTrunc(yoe, 4) - @divTrunc(yoe, 100) + doy;
+    return era * 146097 + doe - 719468;
+}
+
+// "2026-08-11T04:58:13.978Z" -> unix epoch seconds
+fn parseIsoEpoch(s: []const u8) ?i64 {
+    if (s.len < 19) return null;
+    const y = fmt.parseInt(i64, s[0..4], 10) catch return null;
+    const mo = fmt.parseInt(i64, s[5..7], 10) catch return null;
+    const d = fmt.parseInt(i64, s[8..10], 10) catch return null;
+    const h = fmt.parseInt(i64, s[11..13], 10) catch return null;
+    const mi = fmt.parseInt(i64, s[14..16], 10) catch return null;
+    const se = fmt.parseInt(i64, s[17..19], 10) catch return null;
+    return daysFromCivil(y, mo, d) * 86400 + h * 3600 + mi * 60 + se;
+}
+
+fn jsonU64(obj: []const u8, key: []const u8) u64 {
+    var kb: [64]u8 = undefined;
+    const pat = fmt.bufPrint(&kb, "\"{s}\":", .{key}) catch return 0;
+    const idx = mem.indexOf(u8, obj, pat) orelse return 0;
+    var p = idx + pat.len;
+    while (p < obj.len and obj[p] == ' ') p += 1;
+    var e = p;
+    while (e < obj.len and obj[e] >= '0' and obj[e] <= '9') e += 1;
+    if (e == p) return 0;
+    return fmt.parseUnsigned(u64, obj[p..e], 10) catch 0;
+}
+
+// Sum model.completed token usage of the last 24h from OpenClaw
+// trajectory logs (~/.openclaw/agents/*/sessions/*.trajectory.jsonl).
+fn getAi(io: std.Io) AiInfo {
+    var info = AiInfo{ .total = 0, .input = 0, .output = 0, .cache = 0, .calls = 0 };
+    const alloc = std.heap.page_allocator;
+    const cutoff = time(null) - 86400;
+    const home = if (getenv("HOME")) |h| mem.span(h) else "/root";
+    var pb: [512]u8 = undefined;
+    const agents_path = fmt.bufPrint(&pb, "{s}/.openclaw/agents", .{home}) catch return info;
+    var agents = std.Io.Dir.openDirAbsolute(io, agents_path, .{ .iterate = true }) catch return info;
+    defer agents.close(io);
+    var ai = agents.iterate();
+    while (ai.next(io) catch null) |agent| {
+        if (agent.kind != .directory) continue;
+        var sb: [512]u8 = undefined;
+        const sess_path = fmt.bufPrint(&sb, "{s}/sessions", .{agent.name}) catch continue;
+        var sessions = agents.openDir(io, sess_path, .{ .iterate = true }) catch continue;
+        defer sessions.close(io);
+        var si = sessions.iterate();
+        while (si.next(io) catch null) |ent| {
+            if (ent.kind != .file) continue;
+            if (!mem.endsWith(u8, ent.name, ".trajectory.jsonl")) continue;
+            const st = sessions.statFile(io, ent.name, .{}) catch continue;
+            if (@divFloor(st.mtime.nanoseconds, std.time.ns_per_s) < cutoff) continue;
+            const data = sessions.readFileAlloc(io, ent.name, alloc, .limited(64 * 1024 * 1024)) catch continue;
+            defer alloc.free(data);
+            var lines = mem.splitScalar(u8, data, '\n');
+            while (lines.next()) |line| {
+                if (mem.indexOf(u8, line, "\"type\":\"model.completed\"") == null) continue;
+                const tsi = mem.indexOf(u8, line, "\"ts\":\"") orelse continue;
+                const ts = parseIsoEpoch(line[tsi + 6 ..]) orelse continue;
+                if (ts < cutoff) continue;
+                const ui = mem.indexOf(u8, line, "\"usage\":{") orelse continue;
+                const rest = line[ui + 9 ..];
+                const end = mem.indexOfScalar(u8, rest, '}') orelse continue;
+                const usage = rest[0..end];
+                info.input += jsonU64(usage, "input");
+                info.output += jsonU64(usage, "output");
+                info.cache += jsonU64(usage, "cacheRead");
+                info.total += jsonU64(usage, "total");
+                info.calls += 1;
+            }
+        }
+    }
+    return info;
 }
 
 fn getProcs(io: std.Io, procs: []Process) !usize {
@@ -203,6 +287,13 @@ fn getProcs(io: std.Io, procs: []Process) !usize {
 
 // ── Output ────────────────────────────────────────────────
 
+fn fmtTok(buf: []u8, v: u64) []const u8 {
+    const f = @as(f64, @floatFromInt(v));
+    if (v >= 1_000_000) return fmt.bufPrint(buf, "{d:.1}M", .{f / 1_000_000.0}) catch "?";
+    if (v >= 1_000) return fmt.bufPrint(buf, "{d:.1}k", .{f / 1_000.0}) catch "?";
+    return fmt.bufPrint(buf, "{d}", .{v}) catch "?";
+}
+
 fn printBar(w: anytype, pct: f64, width: usize) !void {
     const filled = @as(usize, @intFromFloat(@min(pct, 100.0) / 100.0 * @as(f64, @floatFromInt(width))));
     var i: usize = 0;
@@ -258,6 +349,7 @@ pub fn main() !void {
     var procs: [128]Process = undefined;
     for (&procs) |*p| p.* = Process{};
     const top_n = getProcs(io, &procs) catch 0;
+    const ai = getAi(io);
 
     try printRule(w, '+', '-', '+', "[ SYSTEM STATUS ]");
     try w.writeAll("|                                                          |\n");
@@ -322,6 +414,25 @@ pub fn main() !void {
         try printPadded(w, s.buffered());
     }
 
+    try w.writeAll("|                                                          |\n");
+    try printRule(w, '+', '-', '+', "[ AI / OPENCLAW ]");
+    try w.writeAll("|                                                          |\n");
+    if (ai.calls == 0) {
+        try printPadded(w, "  no model calls in the last 24h");
+    } else {
+        var b1: [256]u8 = undefined;
+        var s1: std.Io.Writer = .fixed(&b1);
+        var t: [32]u8 = undefined;
+        try s1.print("  TOKENS  {s} / 24h   ({d} calls)", .{ fmtTok(&t, ai.total), ai.calls });
+        try printPadded(w, s1.buffered());
+        var b2: [256]u8 = undefined;
+        var s2: std.Io.Writer = .fixed(&b2);
+        var t1: [32]u8 = undefined;
+        var t2: [32]u8 = undefined;
+        var t3: [32]u8 = undefined;
+        try s2.print("          in {s}   out {s}   cache {s}", .{ fmtTok(&t1, ai.input), fmtTok(&t2, ai.output), fmtTok(&t3, ai.cache) });
+        try printPadded(w, s2.buffered());
+    }
     try w.writeAll("|                                                          |\n");
     try printRule(w, '+', '-', '+', "[ TOP PROCESSES ]");
     try w.writeAll("|                                                          |\n");
