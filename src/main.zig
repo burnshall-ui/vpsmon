@@ -27,14 +27,17 @@ fn parseKb(line: []const u8) u64 {
     return fmt.parseUnsigned(u64, t.next() orelse return 0, 10) catch 0;
 }
 
-fn getCpu(io: std.Io) !CpuInfo {
-    var buf: [4096]u8 = undefined;
+const CpuTimes = struct { idle: u64, total: u64 };
+
+fn readCpuTimes(io: std.Io) !CpuTimes {
+    var buf: [8192]u8 = undefined;
     const data = try readFile(io, "/proc/stat", &buf);
     var lines_iter = mem.splitScalar(u8, data, '\n');
     const first = lines_iter.first();
     if (!mem.startsWith(u8, first, "cpu ")) return error.ParseError;
     var f = mem.tokenizeScalar(u8, first, ' ');
     _ = f.next();
+    // user nice system idle iowait irq softirq steal guest guest_nice
     var v: [10]u64 = [_]u64{0} ** 10;
     var i: usize = 0;
     while (f.next()) |s| {
@@ -44,9 +47,22 @@ fn getCpu(io: std.Io) !CpuInfo {
     }
     const idle = v[3] + v[4];
     var total: u64 = 0;
-    for (v[0..i]) |x| total += x;
-    if (total == 0) return CpuInfo{ .usage_pct = 0 };
-    return CpuInfo{ .usage_pct = @as(f64, @floatFromInt(total - idle)) / @as(f64, @floatFromInt(total)) * 100.0 };
+    // guest/guest_nice are already included in user/nice
+    for (v[0..@min(i, 8)]) |x| total += x;
+    return CpuTimes{ .idle = idle, .total = total };
+}
+
+fn getCpu(io: std.Io) !CpuInfo {
+    // /proc/stat counters are cumulative since boot; usage needs the
+    // delta between two snapshots.
+    const a = try readCpuTimes(io);
+    io.sleep(.fromMilliseconds(500), .awake) catch {};
+    const b = try readCpuTimes(io);
+    if (b.total <= a.total) return CpuInfo{ .usage_pct = 0 };
+    const dt = b.total - a.total;
+    const di = b.idle -| a.idle;
+    const busy = if (dt > di) dt - di else 0;
+    return CpuInfo{ .usage_pct = @as(f64, @floatFromInt(busy)) / @as(f64, @floatFromInt(dt)) * 100.0 };
 }
 
 fn getMem(io: std.Io) !MemInfo {
@@ -73,6 +89,7 @@ const Statfs = extern struct {
     f_flags: i64, f_spare: [4]i64,
 };
 extern "c" fn statfs(path: [*:0]const u8, buf: *Statfs) callconv(.c) c_int;
+extern "c" fn getpagesize() callconv(.c) c_int;
 
 fn getDisk() !DiskInfo {
     var s: Statfs = undefined;
@@ -174,7 +191,7 @@ fn getProcs(io: std.Io, procs: []Process) !usize {
             const cl = @min(name_src.len, 127);
             @memcpy(procs[count].name[0..cl], name_src[0..cl]);
             procs[count].name_len = cl;
-            procs[count].mem_mb = @as(f64, @floatFromInt(rss)) * 4096.0 / (1024 * 1024);
+            procs[count].mem_mb = @as(f64, @floatFromInt(rss)) * @as(f64, @floatFromInt(getpagesize())) / (1024 * 1024);
             count += 1;
         }
     }
