@@ -6,6 +6,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/burnshall-ui/vpsmon/actions/workflows/ci.yml"><img src="https://github.com/burnshall-ui/vpsmon/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
   <img src="https://img.shields.io/badge/Zig-0.16-F7A41D?logo=zig&logoColor=white" alt="Zig 0.16" />
   <img src="https://img.shields.io/badge/Linux-%2Fproc-FCC624?logo=linux&logoColor=black" alt="Linux /proc" />
   <img src="https://img.shields.io/badge/Telegram-Bot%20API-26A5E4?logo=telegram&logoColor=white" alt="Telegram Bot API" />
@@ -76,6 +77,18 @@ The binary is at `zig-out/bin/vpsmon` (statically linked; ~0.5 MB after `strip`)
 strip zig-out/bin/vpsmon
 cp zig-out/bin/vpsmon ~/.local/bin/
 ```
+
+## Tests
+
+```bash
+zig build test --summary all   # unit tests
+zig fmt --check .              # formatting
+```
+
+The tests cover the hand-rolled parsers — `/proc/meminfo` fields, the civil-date
+conversion, ISO timestamp parsing, the minimal JSON scraper, and the token
+formatter's unit thresholds. Everything else reads `/proc`, which CI checks by
+running the binary and asserting the dashboard still contains every section.
 
 ## Usage
 
@@ -155,12 +168,14 @@ vpsmon ships with an [OpenClaw](https://openclaw.ai) skill definition. To use it
 ```
 vpsmon/
 ├── src/
-│   └── main.zig          # Core monitor — reads /proc/, outputs ASCII
+│   └── main.zig           # Core monitor — reads /proc/, outputs ASCII + tests
 ├── render.sh              # Renders ASCII to PNG via ImageMagick/Pango
 ├── send_status.sh.example # Template: render + send via Telegram
 ├── SKILL.md               # OpenClaw agent skill definition
 ├── assets/
 │   └── screenshot.png     # Example output
+├── .github/workflows/
+│   └── ci.yml             # fmt check, build, tests, smoke test
 ├── build.zig              # Zig build configuration
 ├── build.zig.zon          # Zig package manifest
 ├── LICENSE                # MIT
