@@ -85,9 +85,18 @@ fn getMem(io: std.Io) !MemInfo {
 }
 
 const Statfs = extern struct {
-    f_type: i64, f_bsize: i64, f_blocks: u64, f_bfree: u64, f_bavail: u64,
-    f_files: u64, f_ffree: u64, f_fsid: [2]i32, f_namelen: i64, f_frsize: i64,
-    f_flags: i64, f_spare: [4]i64,
+    f_type: i64,
+    f_bsize: i64,
+    f_blocks: u64,
+    f_bfree: u64,
+    f_bavail: u64,
+    f_files: u64,
+    f_ffree: u64,
+    f_fsid: [2]i32,
+    f_namelen: i64,
+    f_frsize: i64,
+    f_flags: i64,
+    f_spare: [4]i64,
 };
 extern "c" fn statfs(path: [*:0]const u8, buf: *Statfs) callconv(.c) c_int;
 extern "c" fn getpagesize() callconv(.c) c_int;
@@ -280,7 +289,9 @@ fn getProcs(io: std.Io, procs: []Process) !usize {
         }
     }
     mem.sort(Process, procs[0..count], {}, struct {
-        fn lt(_: void, a: Process, b: Process) bool { return a.mem_mb > b.mem_mb; }
+        fn lt(_: void, a: Process, b: Process) bool {
+            return a.mem_mb > b.mem_mb;
+        }
     }.lt);
     return @min(count, 5);
 }
@@ -461,4 +472,89 @@ pub fn main() !void {
     try printRule(w, '+', '-', '+', "");
 
     try std.Io.File.stdout().writeStreamingAll(io, out_writer.buffered());
+}
+
+// ──────────────────────────────────────────────
+// Tests
+//
+// Covers the hand-rolled parsers only. Everything else reads /proc or the
+// filesystem, which the integration check in CI exercises instead.
+// ──────────────────────────────────────────────
+
+const testing = std.testing;
+
+test "parseKb pulls the value out of a /proc/meminfo line" {
+    try testing.expectEqual(@as(u64, 16384), parseKb("MemTotal:       16384 kB"));
+    try testing.expectEqual(@as(u64, 0), parseKb("MemFree:            0 kB"));
+    // Fields are space-separated with variable padding.
+    try testing.expectEqual(@as(u64, 987), parseKb("Cached: 987 kB"));
+}
+
+test "parseKb returns 0 rather than failing on junk" {
+    try testing.expectEqual(@as(u64, 0), parseKb(""));
+    try testing.expectEqual(@as(u64, 0), parseKb("MemTotal:"));
+    try testing.expectEqual(@as(u64, 0), parseKb("MemTotal: notanumber kB"));
+}
+
+test "daysFromCivil matches the proleptic Gregorian calendar" {
+    try testing.expectEqual(@as(i64, 0), daysFromCivil(1970, 1, 1));
+    try testing.expectEqual(@as(i64, 11017), daysFromCivil(2000, 3, 1));
+    try testing.expectEqual(@as(i64, 20676), daysFromCivil(2026, 8, 11));
+    // Leap day in a divisible-by-4 year.
+    try testing.expectEqual(@as(i64, 19782), daysFromCivil(2024, 2, 29));
+    // 1900 was not a leap year, 2000 was — the century rule both ways.
+    try testing.expectEqual(@as(i64, 1), daysFromCivil(1970, 1, 2) - daysFromCivil(1970, 1, 1));
+    try testing.expectEqual(@as(i64, 366), daysFromCivil(2001, 1, 1) - daysFromCivil(2000, 1, 1));
+    try testing.expectEqual(@as(i64, 365), daysFromCivil(1901, 1, 1) - daysFromCivil(1900, 1, 1));
+}
+
+test "daysFromCivil handles dates before the epoch" {
+    try testing.expectEqual(@as(i64, -1), daysFromCivil(1969, 12, 31));
+    try testing.expect(daysFromCivil(1900, 1, 1) < 0);
+}
+
+test "parseIsoEpoch reads the timestamps OpenClaw writes" {
+    try testing.expectEqual(@as(?i64, 0), parseIsoEpoch("1970-01-01T00:00:00Z"));
+    try testing.expectEqual(@as(?i64, 1786424293), parseIsoEpoch("2026-08-11T04:58:13.978Z"));
+    // Milliseconds and the trailing Z are optional — only the first 19 bytes matter.
+    try testing.expectEqual(@as(?i64, 1786424293), parseIsoEpoch("2026-08-11T04:58:13"));
+}
+
+test "parseIsoEpoch rejects anything it cannot parse" {
+    try testing.expectEqual(@as(?i64, null), parseIsoEpoch(""));
+    try testing.expectEqual(@as(?i64, null), parseIsoEpoch("2026-08-11"));
+    try testing.expectEqual(@as(?i64, null), parseIsoEpoch("not-a-timestamp-at-all"));
+}
+
+test "jsonU64 finds a key in a trajectory line" {
+    const obj =
+        \\{"type":"model.completed","usage":{"input":1234,"output":56,"cache_read":7890}}
+    ;
+    try testing.expectEqual(@as(u64, 1234), jsonU64(obj, "input"));
+    try testing.expectEqual(@as(u64, 56), jsonU64(obj, "output"));
+    try testing.expectEqual(@as(u64, 7890), jsonU64(obj, "cache_read"));
+}
+
+test "jsonU64 tolerates whitespace after the colon" {
+    try testing.expectEqual(@as(u64, 42), jsonU64("{\"n\":   42}", "n"));
+}
+
+test "jsonU64 returns 0 for a missing or non-numeric key" {
+    const obj =
+        \\{"input":1234,"model":"claude-opus-5"}
+    ;
+    try testing.expectEqual(@as(u64, 0), jsonU64(obj, "absent"));
+    // A string value must not be read as a number.
+    try testing.expectEqual(@as(u64, 0), jsonU64(obj, "model"));
+    try testing.expectEqual(@as(u64, 0), jsonU64("", "input"));
+}
+
+test "fmtTok switches unit at the right thresholds" {
+    var buf: [32]u8 = undefined;
+    try testing.expectEqualStrings("0", fmtTok(&buf, 0));
+    try testing.expectEqualStrings("999", fmtTok(&buf, 999));
+    try testing.expectEqualStrings("1.0k", fmtTok(&buf, 1_000));
+    try testing.expectEqualStrings("999.9k", fmtTok(&buf, 999_949));
+    try testing.expectEqualStrings("1.0M", fmtTok(&buf, 1_000_000));
+    try testing.expectEqualStrings("12.3M", fmtTok(&buf, 12_345_678));
 }

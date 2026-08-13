@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+    branches: ["main", "master"]
+
+env:
+  # Keep in sync with minimum_zig_version in build.zig.zon.
+  ZIG_VERSION: 0.16.0
+
+jobs:
+  build-and-test:
+    # vpsmon reads /proc, so it only builds and runs meaningfully on Linux.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Check formatting
+        run: zig fmt --check .
+
+      - name: Build
+        run: zig build -Doptimize=ReleaseFast
+
+      - name: Unit tests
+        run: zig build test --summary all
+
+      # The unit tests cover the parsers; this checks the binary actually runs
+      # and produces a dashboard on a real /proc.
+      - name: Smoke test
+        run: |
+          out=$(./zig-out/bin/vpsmon)
+          echo "$out"
+          for section in CPU RAM DISK NET LOAD UPTIME; do
+            echo "$out" | grep -q "$section" || { echo "missing section: $section" >&2; exit 1; }
+          done
