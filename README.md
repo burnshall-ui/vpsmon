@@ -1,10 +1,26 @@
-# vpsmon
+<h1 align="center">v p s m o n</h1>
+
+<p align="center">
+  <strong>Zero-dependency VPS monitor that reports as an image, not a wall of text</strong><br/>
+  <em>Reads <code>/proc</code> directly, renders hacker-green on black, ships it to your chat.</em>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Zig-0.16-F7A41D?logo=zig&logoColor=white" alt="Zig 0.16" />
+  <img src="https://img.shields.io/badge/Linux-%2Fproc-FCC624?logo=linux&logoColor=black" alt="Linux /proc" />
+  <img src="https://img.shields.io/badge/Telegram-Bot%20API-26A5E4?logo=telegram&logoColor=white" alt="Telegram Bot API" />
+  <img src="https://img.shields.io/badge/output-PNG-00FF41" alt="PNG output" />
+  <img src="https://img.shields.io/badge/dependencies-none-00FF41" alt="No dependencies" />
+  <img src="https://img.shields.io/badge/License-MIT-blue" alt="MIT License" />
+</p>
+
+---
+
+![screenshot](assets/screenshot.png)
 
 A fast, zero-dependency VPS system monitor written in **Zig**. Reads metrics directly from `/proc/` and renders a hacker-style ASCII dashboard.
 
 **The main purpose of this tool is to send a visual image of your system status instead of a plain text message.** It generates a PNG image with green-on-black terminal aesthetics — perfect for Telegram, WhatsApp, or Discord bot integrations.
-
-![screenshot](assets/screenshot.png)
 
 ## Features
 
