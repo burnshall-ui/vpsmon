@@ -1,10 +1,10 @@
 const std = @import("std");
-const zigimg = @import("zigimg");
 const font = @import("font.zig");
+const png = @import("png.zig");
 
-const Color = zigimg.color.Rgba32;
-const BG_COLOR = Color{ .r = 0, .g = 0, .b = 0, .a = 255 };
-const FG_COLOR = Color{ .r = 0, .g = 255, .b = 65, .a = 255 }; // Hacker Green
+const Color = [png.bytes_per_pixel]u8;
+const BG_COLOR: Color = .{ 0, 0, 0 };
+const FG_COLOR: Color = .{ 0, 255, 65 }; // Hacker Green
 
 pub fn renderDashboardToPng(allocator: std.mem.Allocator, io: std.Io, ascii_text: []const u8, out_path: []const u8) !void {
     // 1. Dimensionen berechnen
@@ -26,13 +26,10 @@ pub fn renderDashboardToPng(allocator: std.mem.Allocator, io: std.Io, ascii_text
     const img_width = (max_cols * font.glyph_width) + (padding * 2);
     const img_height = (lines * font.glyph_height) + (padding * 2);
 
-    // 2. Bild erstellen und mit Schwarz füllen
-    var img = try zigimg.Image.create(allocator, img_width, img_height, .rgba32);
-    defer img.deinit(allocator);
-
-    for (img.pixels.rgba32) |*pixel| {
-        pixel.* = BG_COLOR;
-    }
+    // 2. Pixelpuffer erstellen und mit Schwarz füllen
+    const pixels = try allocator.alloc(u8, img_width * img_height * png.bytes_per_pixel);
+    defer allocator.free(pixels);
+    fill(pixels, BG_COLOR);
 
     // 3. Text rendern
     var cursor_x: usize = padding;
@@ -59,7 +56,7 @@ pub fn renderDashboardToPng(allocator: std.mem.Allocator, io: std.Io, ascii_text
                 const is_pixel_set = (row & (@as(u8, 1) << @intCast(7 - x))) != 0;
                 if (is_pixel_set) {
                     const px_index = (cursor_y + y) * img_width + (cursor_x + x);
-                    img.pixels.rgba32[px_index] = FG_COLOR;
+                    setPixel(pixels, px_index, FG_COLOR);
                 }
             }
         }
@@ -67,6 +64,24 @@ pub fn renderDashboardToPng(allocator: std.mem.Allocator, io: std.Io, ascii_text
     }
 
     // 4. Als PNG speichern
-    var write_buffer: [8192]u8 = undefined;
-    try img.writeToFilePath(allocator, io, out_path, &write_buffer, .{ .png = .{} });
+    try png.writeRgbFile(
+        allocator,
+        io,
+        out_path,
+        pixels,
+        @intCast(img_width),
+        @intCast(img_height),
+    );
+}
+
+fn fill(pixels: []u8, color: Color) void {
+    var i: usize = 0;
+    while (i < pixels.len) : (i += png.bytes_per_pixel) {
+        @memcpy(pixels[i..][0..png.bytes_per_pixel], &color);
+    }
+}
+
+fn setPixel(pixels: []u8, index: usize, color: Color) void {
+    const at = index * png.bytes_per_pixel;
+    @memcpy(pixels[at..][0..png.bytes_per_pixel], &color);
 }
