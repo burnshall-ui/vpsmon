@@ -108,8 +108,7 @@ fn deflateScanlines(
     const cw = &compress.writer;
 
     const stride = @as(usize, width) * bytes_per_pixel;
-    var row: usize = 0;
-    while (row < height) : (row += 1) {
+    for (0..height) |row| {
         try cw.writeByte(0); // filter type 0: none
         try cw.writeAll(pixels[row * stride ..][0..stride]);
     }
