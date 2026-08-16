@@ -1,4 +1,5 @@
 const std = @import("std");
+const renderer = @import("renderer.zig");
 const fs = std.fs;
 const mem = std.mem;
 const fmt = std.fmt;
@@ -493,6 +494,15 @@ pub fn gatherAndPrintStats(io: std.Io, w: *std.Io.Writer) !void {
 
 const testing = std.testing;
 
+// Pull the other modules into the test build. Without this the test runner
+// only ever sees this file: a decl that no test uses is never analysed, so
+// the tests in renderer.zig and png.zig would silently not run.
+test {
+    testing.refAllDecls(@This());
+    _ = @import("renderer.zig");
+    _ = @import("png.zig");
+}
+
 test "parseKb pulls the value out of a /proc/meminfo line" {
     try testing.expectEqual(@as(u64, 16384), parseKb("MemTotal:       16384 kB"));
     try testing.expectEqual(@as(u64, 0), parseKb("MemFree:            0 kB"));
@@ -590,7 +600,6 @@ pub fn main(init: std.process.Init.Minimal) !void {
 
     if (args.next()) |out_path| {
         // PNG Modus
-        const renderer = @import("renderer.zig");
         try renderer.renderDashboardToPng(allocator, io, dashboard, out_path);
 
         // stdout, not stderr: this is the success path, and callers redirecting
