@@ -1,7 +1,7 @@
 ---
 name: vpsmon
 description: VPS System Monitor — renders CPU, RAM, Disk, Network, Load, Uptime and Top Processes as a hacker-style ASCII dashboard image.
-metadata: {"clawdbot":{"emoji":"🖥️","requires":{"bins":["vpsmon","convert"]}}}
+metadata: {"clawdbot":{"emoji":"🖥️","requires":{"bins":["vpsmon"]}}}
 ---
 
 # vpsmon
@@ -23,7 +23,7 @@ vpsmon
 
 ### Render to PNG (no send)
 ```bash
-/path/to/vpsmon/render.sh /tmp/vpsmon.png
+vpsmon /tmp/vpsmon.png
 ```
 
 ## When to use

@@ -33,25 +33,16 @@ A fast, zero-dependency VPS system monitor written in **Zig**. Reads metrics dir
 - **Uptime** (days, hours, minutes)
 - **Top 5 processes** by memory usage (user-space only, no kernel threads)
 - **AI token usage** — last-24h [OpenClaw](https://openclaw.ai) token consumption (input / output / cache, model calls)
-- **PNG rendering** via ImageMagick/Pango — hacker green (`#00FF41`) on black
+- **PNG rendering** built in — hacker green (`#00FF41`) on black, no external tool
 - **Telegram integration** — one-command render + send via Bot API
 
 ## Requirements
 
-### Build
 - [Zig](https://ziglang.org/download/) >= 0.16.0
 
-### Image rendering (optional)
-- [ImageMagick](https://imagemagick.org/) with Pango support
-- A monospace font (e.g. DejaVu Sans Mono)
-
-```bash
-# Ubuntu/Debian
-sudo apt install imagemagick fonts-dejavu-core
-
-# Arch
-sudo pacman -S imagemagick ttf-dejavu
-```
+That is the whole list. The PNG encoder and the bitmap font are part of the
+program, so rendering needs no image library, no font installed on the system,
+and no `convert` on the box you deploy to.
 
 ## Build
 
@@ -125,9 +116,14 @@ vpsmon
 ```
 
 ### Render as PNG
+
+Pass an output path and the dashboard is written as a PNG instead of printed:
+
 ```bash
-./render.sh /tmp/vpsmon.png
+vpsmon /tmp/vpsmon.png
 ```
+
+`./render.sh [path]` does the same and defaults the path to `/tmp/vpsmon.png`.
 
 ### Send via Telegram
 ```bash
@@ -168,8 +164,11 @@ vpsmon ships with an [OpenClaw](https://openclaw.ai) skill definition. To use it
 ```
 vpsmon/
 ├── src/
-│   └── main.zig           # Core monitor — reads /proc/, outputs ASCII + tests
-├── render.sh              # Renders ASCII to PNG via ImageMagick/Pango
+│   ├── main.zig           # Core monitor — reads /proc/, outputs ASCII + tests
+│   ├── renderer.zig       # Draws the dashboard into an RGB pixel buffer
+│   ├── font.zig           # Embedded VGA 8x16 bitmap font
+│   └── png.zig            # PNG encoder built on std + tests
+├── render.sh              # Convenience wrapper around `vpsmon <path>`
 ├── send_status.sh.example # Template: render + send via Telegram
 ├── SKILL.md               # OpenClaw agent skill definition
 ├── assets/
@@ -201,8 +200,24 @@ CPU usage is computed from the delta of two `/proc/stat` snapshots taken 500 ms 
 
 The AI section sums the `model.completed` events of the last 24 hours from OpenClaw's trajectory logs. If no OpenClaw installation is present, the section shows "no model calls in the last 24h".
 
+### The image
 
-Image rendering uses ImageMagick's Pango backend for proper monospace font rendering with UTF-8 support.
+The same ASCII the terminal gets is drawn glyph by glyph into an RGB buffer
+using an embedded VGA 8x16 bitmap font, then encoded as a PNG by `src/png.zig`.
+
+That encoder leans entirely on the standard library. `std.compress.flate`
+handles deflate and, with its zlib container, writes the two-byte header and the
+trailing Adler-32 checksum — the genuinely hard part of the format.
+`std.hash.crc` supplies the per-chunk CRC. What is left is the container itself:
+signature, `IHDR`, `IDAT`, `IEND`, and a filter byte in front of each scanline.
+
+The output is 8-bit truecolour, no interlacing, filter type 0 on every row.
+Choosing no filter is conformant — PNG lets an encoder pick per row — and costs
+nothing here, because deflate already collapses the repeated border rows: a
+dashboard compresses to under 1% of its raw size.
+
+Since the dashboard is pure ASCII, only bytes 0x00–0xFF of the font are ever
+needed; there is no UTF-8 shaping, and no font has to be installed.
 
 ## License
 
