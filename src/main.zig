@@ -592,7 +592,13 @@ pub fn main(init: std.process.Init.Minimal) !void {
         // PNG Modus
         const renderer = @import("renderer.zig");
         try renderer.renderDashboardToPng(allocator, io, dashboard, out_path);
-        std.debug.print("Dashboard saved to {s}\n", .{out_path});
+
+        // stdout, not stderr: this is the success path, and callers redirecting
+        // stdout away expect silence.
+        var msg_buf: [512]u8 = undefined;
+        var msg: std.Io.Writer = .fixed(&msg_buf);
+        try msg.print("Dashboard saved to {s}\n", .{out_path});
+        try std.Io.File.stdout().writeStreamingAll(io, msg.buffered());
     } else {
         // Terminal Modus
         try std.Io.File.stdout().writeStreamingAll(io, dashboard);
