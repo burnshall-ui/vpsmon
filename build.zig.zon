@@ -1,11 +1,12 @@
 .{
     .name = .vpsmon,
     .version = "1.0.0",
-    .fingerprint = 0xe481c38628f84a1b,
+    .fingerprint = 0xe481c386983434c8,
+    .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .zigimg = .{
             .url = "https://codeload.github.com/zigimg/zigimg/tar.gz/refs/heads/master",
-            .hash = "zigimg-0.1.0-8_eo2qWHFwA-S24SH7x7NplPii0EbIQiUfDrimgA6rzN",
+            .hash = "zigimg-0.1.0-8_eo2mHBFwDLhWjXriR17_b7VF6qML1f98Xokp7ZZbop",
         },
     },
     .paths = .{

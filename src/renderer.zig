@@ -6,12 +6,12 @@ const Color = zigimg.color.Rgba32;
 const BG_COLOR = Color{ .r = 0, .g = 0, .b = 0, .a = 255 };
 const FG_COLOR = Color{ .r = 0, .g = 255, .b = 65, .a = 255 }; // Hacker Green
 
-pub fn renderDashboardToPng(allocator: std.mem.Allocator, ascii_text: []const u8, out_path: []const u8) !void {
+pub fn renderDashboardToPng(allocator: std.mem.Allocator, io: std.Io, ascii_text: []const u8, out_path: []const u8) !void {
     // 1. Dimensionen berechnen
     var lines: usize = 0;
     var max_cols: usize = 0;
     var current_cols: usize = 0;
-    
+
     for (ascii_text) |char| {
         if (char == '\n') {
             lines += 1;
@@ -21,7 +21,7 @@ pub fn renderDashboardToPng(allocator: std.mem.Allocator, ascii_text: []const u8
             current_cols += 1;
         }
     }
-    
+
     const padding = 20;
     const img_width = (max_cols * font.glyph_width) + (padding * 2);
     const img_height = (lines * font.glyph_height) + (padding * 2);
@@ -29,7 +29,7 @@ pub fn renderDashboardToPng(allocator: std.mem.Allocator, ascii_text: []const u8
     // 2. Bild erstellen und mit Schwarz füllen
     var img = try zigimg.Image.create(allocator, img_width, img_height, .rgba32);
     defer img.deinit(allocator);
-    
+
     for (img.pixels.rgba32) |*pixel| {
         pixel.* = BG_COLOR;
     }
@@ -68,5 +68,5 @@ pub fn renderDashboardToPng(allocator: std.mem.Allocator, ascii_text: []const u8
 
     // 4. Als PNG speichern
     var write_buffer: [8192]u8 = undefined;
-    try img.writeToFilePath(allocator, out_path, &write_buffer, .{ .png = .{} });
+    try img.writeToFilePath(allocator, io, out_path, &write_buffer, .{ .png = .{} });
 }

@@ -1,5 +1,6 @@
 zig-out/
 .zig-cache/
+zig-pkg/
 /tmp/
 *.png
 !assets/screenshot.png
