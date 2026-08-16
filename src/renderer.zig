@@ -21,6 +21,13 @@ pub fn renderDashboardToPng(allocator: std.mem.Allocator, io: std.Io, ascii_text
             current_cols += 1;
         }
     }
+    // A trailing line without its newline still gets drawn below, so it has to
+    // count here -- otherwise the buffer comes up one row short and the drawing
+    // loop writes past its end.
+    if (current_cols > 0) {
+        lines += 1;
+        if (current_cols > max_cols) max_cols = current_cols;
+    }
 
     const padding = 20;
     const img_width = (max_cols * font.glyph_width) + (padding * 2);
@@ -42,16 +49,14 @@ pub fn renderDashboardToPng(allocator: std.mem.Allocator, io: std.Io, ascii_text
             continue;
         }
 
-        // ASCII Fallback
-        const safe_char = if (char < 256) char else '?';
-        const glyph = font.vga_8x16[safe_char];
+        // Die Tabelle hat einen Eintrag pro Byte-Wert, ein Index kann also
+        // nicht danebengehen.
+        const glyph = font.vga_8x16[char];
 
         // Glyph in den Pixelbuffer zeichnen
-        var y: usize = 0;
-        while (y < font.glyph_height) : (y += 1) {
+        for (0..font.glyph_height) |y| {
             const row = glyph[y];
-            var x: usize = 0;
-            while (x < font.glyph_width) : (x += 1) {
+            for (0..font.glyph_width) |x| {
                 // Prüfen ob das Bit gesetzt ist (von links nach rechts)
                 const is_pixel_set = (row & (@as(u8, 1) << @intCast(7 - x))) != 0;
                 if (is_pixel_set) {
@@ -75,13 +80,35 @@ pub fn renderDashboardToPng(allocator: std.mem.Allocator, io: std.Io, ascii_text
 }
 
 fn fill(pixels: []u8, color: Color) void {
-    var i: usize = 0;
-    while (i < pixels.len) : (i += png.bytes_per_pixel) {
-        @memcpy(pixels[i..][0..png.bytes_per_pixel], &color);
-    }
+    for (0..pixels.len / png.bytes_per_pixel) |i| setPixel(pixels, i, color);
 }
 
 fn setPixel(pixels: []u8, index: usize, color: Color) void {
     const at = index * png.bytes_per_pixel;
     @memcpy(pixels[at..][0..png.bytes_per_pixel], &color);
+}
+
+// ──────────────────────────────────────────────
+// Tests
+// ──────────────────────────────────────────────
+
+const testing = std.testing;
+
+test "a trailing line without a newline stays inside the buffer" {
+    // The dashboard always ends in a newline, but nothing enforces that. Text
+    // whose last line is unterminated used to size the buffer for one row
+    // fewer than it drew, walking off the end -- caught by the bounds check in
+    // Debug, silent corruption in ReleaseFast.
+    //
+    // The pipe matters here: it is the one glyph inked in all sixteen rows, so
+    // it reaches the indices past the end. A line of letters alone leaves the
+    // bottom rows blank and slips through.
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const out = "vpsmon-renderer-test.png";
+    defer std.Io.Dir.cwd().deleteFile(io, out) catch {};
+
+    try renderDashboardToPng(testing.allocator, io, "an unterminated line ends |", out);
 }
