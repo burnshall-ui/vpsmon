@@ -267,10 +267,35 @@ fn getAi(io: std.Io) AiInfo {
     return info;
 }
 
-fn getProcs(io: std.Io, procs: []Process) !usize {
-    var dir = std.Io.Dir.openDirAbsolute(io, "/proc", .{ .iterate = true }) catch return 0;
+const top_procs = 5;
+
+// The largest processes seen so far, largest first. Every process goes
+// through add(), so the result is the top of all of them, not of however
+// many happened to fit in a buffer.
+const TopProcs = struct {
+    items: [top_procs]Process = undefined,
+    len: usize = 0,
+
+    fn add(self: *TopProcs, p: Process) void {
+        var at: usize = self.len;
+        while (at > 0 and self.items[at - 1].mem_mb < p.mem_mb) at -= 1;
+        if (at >= top_procs) return; // smaller than everything kept
+        // Shift the smaller ones down; when full, the last one falls off.
+        var i: usize = @min(self.len, top_procs - 1);
+        while (i > at) : (i -= 1) self.items[i] = self.items[i - 1];
+        self.items[at] = p;
+        if (self.len < top_procs) self.len += 1;
+    }
+
+    fn slice(self: *const TopProcs) []const Process {
+        return self.items[0..self.len];
+    }
+};
+
+fn getProcs(io: std.Io) TopProcs {
+    var top: TopProcs = .{};
+    var dir = std.Io.Dir.openDirAbsolute(io, "/proc", .{ .iterate = true }) catch return top;
     defer dir.close(io);
-    var count: usize = 0;
     var sbuf: [4096]u8 = undefined;
     var cbuf: [256]u8 = undefined;
     var iter = dir.iterate();
@@ -311,20 +336,14 @@ fn getProcs(io: std.Io, procs: []Process) !usize {
             fi += 1;
         }
 
-        if (count < procs.len) {
-            const cl = @min(name_src.len, 127);
-            @memcpy(procs[count].name[0..cl], name_src[0..cl]);
-            procs[count].name_len = cl;
-            procs[count].mem_mb = @as(f64, @floatFromInt(rss)) * @as(f64, @floatFromInt(getpagesize())) / (1024 * 1024);
-            count += 1;
-        }
+        var p = Process{};
+        const cl = @min(name_src.len, 127);
+        @memcpy(p.name[0..cl], name_src[0..cl]);
+        p.name_len = cl;
+        p.mem_mb = @as(f64, @floatFromInt(rss)) * @as(f64, @floatFromInt(getpagesize())) / (1024 * 1024);
+        top.add(p);
     }
-    mem.sort(Process, procs[0..count], {}, struct {
-        fn lt(_: void, a: Process, b: Process) bool {
-            return a.mem_mb > b.mem_mb;
-        }
-    }.lt);
-    return @min(count, 5);
+    return top;
 }
 
 // ── Output ────────────────────────────────────────────────
@@ -380,9 +399,7 @@ pub fn gatherAndPrintStats(io: std.Io, w: *std.Io.Writer) !void {
     const net = getNet(io) catch NetInfo{ .rx_mb = 0, .tx_mb = 0 };
     const load = getLoad(io) catch LoadInfo{ .one = 0, .five = 0, .fifteen = 0 };
     const uptime = getUptime(io) catch UptimeInfo{ .days = 0, .hours = 0, .minutes = 0 };
-    var procs: [128]Process = undefined;
-    for (&procs) |*p| p.* = Process{};
-    const top_n = getProcs(io, &procs) catch 0;
+    const top = getProcs(io);
     const ai = getAi(io);
 
     try printRule(w, '+', '-', '+', "[ SYSTEM STATUS ]");
@@ -471,12 +488,10 @@ pub fn gatherAndPrintStats(io: std.Io, w: *std.Io.Writer) !void {
     try printRule(w, '+', '-', '+', "[ TOP PROCESSES ]");
     try w.writeAll("|                                                          |\n");
 
-    var pi: usize = 0;
-    while (pi < top_n) : (pi += 1) {
+    for (top.slice()) |p| {
         var b: [256]u8 = undefined;
         var s: std.Io.Writer = .fixed(&b);
         const sw = &s;
-        const p = procs[pi];
         const name = p.name[0..p.name_len];
         const show_len = @min(name.len, 28);
         try sw.writeAll("  ");
@@ -555,6 +570,40 @@ test "diskInfo leaves the root reservation out, like df" {
 
 test "diskInfo copes with an empty filesystem" {
     try testing.expectEqual(@as(f64, 0), diskInfo(0, 0, 0, 4096).pct);
+}
+
+fn testProc(mem_mb: f64) Process {
+    return Process{ .mem_mb = mem_mb };
+}
+
+test "TopProcs keeps the largest even when they come last" {
+    // /proc lists in PID order, so a freshly restarted service turns up
+    // late. The old code only sorted the first 128 processes it saw.
+    var top: TopProcs = .{};
+    for (0..200) |i| top.add(testProc(@floatFromInt(i)));
+
+    const got = top.slice();
+    try testing.expectEqual(@as(usize, top_procs), got.len);
+    for (got, 0..) |p, i| {
+        try testing.expectEqual(@as(f64, @floatFromInt(199 - i)), p.mem_mb);
+    }
+}
+
+test "TopProcs sorts whatever order things arrive in" {
+    var top: TopProcs = .{};
+    for ([_]f64{ 30, 10, 50, 20, 60, 5, 40 }) |m| top.add(testProc(m));
+
+    var got: [top_procs]f64 = undefined;
+    for (top.slice(), 0..) |p, i| got[i] = p.mem_mb;
+    try testing.expectEqualSlices(f64, &.{ 60, 50, 40, 30, 20 }, &got);
+}
+
+test "TopProcs with fewer processes than slots" {
+    var top: TopProcs = .{};
+    top.add(testProc(1));
+    top.add(testProc(2));
+    try testing.expectEqual(@as(usize, 2), top.slice().len);
+    try testing.expectEqual(@as(f64, 2), top.slice()[0].mem_mb);
 }
 
 test "parseIsoEpoch reads the timestamps OpenClaw writes" {
