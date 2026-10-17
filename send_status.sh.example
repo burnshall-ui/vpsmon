@@ -6,6 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VPSMON="$SCRIPT_DIR/zig-out/bin/vpsmon"
 OUTPUT="/tmp/vpsmon_$(date +%s).png"
+trap 'rm -f "$OUTPUT"' EXIT
 
 # ── Configure these ──────────────────────────────────────
 BOT_TOKEN="YOUR_TELEGRAM_BOT_TOKEN"
@@ -16,12 +17,13 @@ CHAT_ID="YOUR_TELEGRAM_CHAT_ID"
 "$VPSMON" "$OUTPUT" > /dev/null
 
 # 2. Send via Telegram Bot API
-curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto" \
+#    --fail-with-body: an HTTP error (bad token, rate limit) must fail the
+#    script, and Telegram's reason is in the body.
+if ! resp=$(curl -sS --fail-with-body -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto" \
   -F "chat_id=${CHAT_ID}" \
-  -F "photo=@${OUTPUT}" \
-  -o /dev/null
-
-# 3. Cleanup
-rm -f "$OUTPUT"
+  -F "photo=@${OUTPUT}"); then
+  echo "Telegram rejected the photo: ${resp}" >&2
+  exit 1
+fi
 
 echo "OK"
