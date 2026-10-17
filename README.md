@@ -77,8 +77,10 @@ zig fmt --check .              # formatting
 ```
 
 The tests cover the hand-rolled parsers — `/proc/meminfo` fields, the civil-date
-conversion, ISO timestamp parsing, the minimal JSON scraper, and the token
-formatter's unit thresholds. Everything else reads `/proc`, which CI checks by
+conversion, ISO timestamp parsing, the minimal JSON scraper, the token
+formatter's unit thresholds and the command line — plus the disk arithmetic,
+the top-process selection, the PNG encoder and the renderer's buffer sizing.
+Everything else reads `/proc`, which CI checks by
 running the binary and asserting the dashboard still contains every section.
 
 ## Usage
