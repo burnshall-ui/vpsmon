@@ -125,6 +125,10 @@ vpsmon /tmp/vpsmon.png
 
 `./render.sh [path]` does the same and defaults the path to `/tmp/vpsmon.png`.
 
+Anything starting with `-` is read as an option, not a path: `vpsmon --help`
+prints the usage, anything else is refused. For a file whose name starts with a
+dash, write `./-name.png`.
+
 ### Send via Telegram
 ```bash
 # 1. Copy and configure

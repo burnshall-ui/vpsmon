@@ -652,6 +652,65 @@ test "fmtTok switches unit at the right thresholds" {
     try testing.expectEqualStrings("12.3M", fmtTok(&buf, 12_345_678));
 }
 
+const usage_text =
+    \\Usage: vpsmon [output.png]
+    \\
+    \\Without an argument the dashboard is printed as text. With a path it is
+    \\rendered to that file as a PNG. A path starting with '-' needs a ./ in
+    \\front so it isn't taken for an option.
+    \\
+;
+
+const Mode = union(enum) {
+    terminal,
+    png: []const u8,
+    help,
+};
+
+// `args` yields the arguments after the program name. Anything that looks
+// like an option is refused rather than taken as a file name -- `vpsmon
+// --help` used to write a PNG called "--help".
+fn parseArgs(args: anytype) error{ UnknownOption, TooManyArgs }!Mode {
+    const first = args.next() orelse return .terminal;
+    if (mem.eql(u8, first, "-h") or mem.eql(u8, first, "--help")) return .help;
+    if (first.len > 0 and first[0] == '-') return error.UnknownOption;
+    if (args.next() != null) return error.TooManyArgs;
+    return .{ .png = first };
+}
+
+const TestArgs = struct {
+    list: []const []const u8,
+    i: usize = 0,
+
+    fn next(self: *TestArgs) ?[]const u8 {
+        if (self.i >= self.list.len) return null;
+        defer self.i += 1;
+        return self.list[self.i];
+    }
+};
+
+fn testParse(list: []const []const u8) !Mode {
+    var args: TestArgs = .{ .list = list };
+    return parseArgs(&args);
+}
+
+test "parseArgs: no argument prints, one path renders" {
+    try testing.expectEqual(Mode.terminal, try testParse(&.{}));
+    try testing.expectEqualStrings("/tmp/x.png", (try testParse(&.{"/tmp/x.png"})).png);
+    try testing.expectEqualStrings("./-odd.png", (try testParse(&.{"./-odd.png"})).png);
+}
+
+test "parseArgs: help is help, not a file name" {
+    try testing.expectEqual(Mode.help, try testParse(&.{"--help"}));
+    try testing.expectEqual(Mode.help, try testParse(&.{"-h"}));
+}
+
+test "parseArgs refuses options and extra arguments" {
+    try testing.expectError(error.UnknownOption, testParse(&.{"--version"}));
+    try testing.expectError(error.UnknownOption, testParse(&.{"-"}));
+    try testing.expectError(error.TooManyArgs, testParse(&.{ "a.png", "b.png" }));
+}
+
 pub fn main(init: std.process.Init.Minimal) !void {
     var threaded: std.Io.Threaded = .init(std.heap.page_allocator, .{});
     defer threaded.deinit();
@@ -661,6 +720,26 @@ pub fn main(init: std.process.Init.Minimal) !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
+    var args = init.args.iterate();
+    _ = args.next(); // skip exe name
+
+    // Before gathering, so --help and typos don't wait out the CPU sample.
+    const mode = parseArgs(&args) catch |err| {
+        const why = switch (err) {
+            error.UnknownOption => "unknown option",
+            error.TooManyArgs => "too many arguments",
+        };
+        var eb: [512]u8 = undefined;
+        var e: std.Io.Writer = .fixed(&eb);
+        try e.print("vpsmon: {s}\n\n{s}", .{ why, usage_text });
+        try std.Io.File.stderr().writeStreamingAll(io, e.buffered());
+        std.process.exit(2);
+    };
+    if (mode == .help) {
+        try std.Io.File.stdout().writeStreamingAll(io, usage_text);
+        return;
+    }
+
     var out_buf: [16384]u8 = undefined;
     var out_writer: std.Io.Writer = .fixed(&out_buf);
     const w = &out_writer;
@@ -668,21 +747,20 @@ pub fn main(init: std.process.Init.Minimal) !void {
     try gatherAndPrintStats(io, w);
     const dashboard = out_writer.buffered();
 
-    var args = init.args.iterate();
-    _ = args.next(); // skip exe name
+    switch (mode) {
+        .png => |out_path| {
+            // PNG Modus
+            try renderer.renderDashboardToPng(allocator, io, dashboard, out_path);
 
-    if (args.next()) |out_path| {
-        // PNG Modus
-        try renderer.renderDashboardToPng(allocator, io, dashboard, out_path);
-
-        // stdout, not stderr: this is the success path, and callers redirecting
-        // stdout away expect silence.
-        var msg_buf: [512]u8 = undefined;
-        var msg: std.Io.Writer = .fixed(&msg_buf);
-        try msg.print("Dashboard saved to {s}\n", .{out_path});
-        try std.Io.File.stdout().writeStreamingAll(io, msg.buffered());
-    } else {
+            // stdout, not stderr: this is the success path, and callers redirecting
+            // stdout away expect silence.
+            var msg_buf: [512]u8 = undefined;
+            var msg: std.Io.Writer = .fixed(&msg_buf);
+            try msg.print("Dashboard saved to {s}\n", .{out_path});
+            try std.Io.File.stdout().writeStreamingAll(io, msg.buffered());
+        },
         // Terminal Modus
-        try std.Io.File.stdout().writeStreamingAll(io, dashboard);
+        .terminal => try std.Io.File.stdout().writeStreamingAll(io, dashboard),
+        .help => unreachable, // handled above
     }
 }
