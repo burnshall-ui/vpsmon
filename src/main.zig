@@ -355,6 +355,19 @@ fn fmtTok(buf: []u8, v: u64) []const u8 {
     return fmt.bufPrint(buf, "{d}", .{v}) catch "?";
 }
 
+fn fmtMb(buf: []u8, mb: f64) []const u8 {
+    if (mb >= 1024) return fmt.bufPrint(buf, "{d:.1} GB", .{mb / 1024}) catch "?";
+    return fmt.bufPrint(buf, "{d:.0} MB", .{mb}) catch "?";
+}
+
+// Each direction picks its own unit; one shared unit chosen from tx alone
+// printed a busy downlink as "v 51200 MB".
+fn netLine(buf: []u8, net: NetInfo) []const u8 {
+    var t1: [32]u8 = undefined;
+    var t2: [32]u8 = undefined;
+    return fmt.bufPrint(buf, "  NET   ^ {s}    v {s}   (total)", .{ fmtMb(&t1, net.tx_mb), fmtMb(&t2, net.rx_mb) }) catch "?";
+}
+
 fn printBar(w: anytype, pct: f64, width: usize) !void {
     const filled = @as(usize, @intFromFloat(@min(pct, 100.0) / 100.0 * @as(f64, @floatFromInt(width))));
     var i: usize = 0;
@@ -441,14 +454,7 @@ pub fn gatherAndPrintStats(io: std.Io, w: *std.Io.Writer) !void {
     // NET
     {
         var b: [256]u8 = undefined;
-        var s: std.Io.Writer = .fixed(&b);
-        const sw = &s;
-        if (net.tx_mb > 1024) {
-            try sw.print("  NET   ^ {d:.1} GB    v {d:.1} GB   (total)", .{ net.tx_mb / 1024, net.rx_mb / 1024 });
-        } else {
-            try sw.print("  NET   ^ {d:.0} MB    v {d:.0} MB   (total)", .{ net.tx_mb, net.rx_mb });
-        }
-        try printPadded(w, s.buffered());
+        try printPadded(w, netLine(&b, net));
     }
     // LOAD
     {
@@ -570,6 +576,24 @@ test "diskInfo leaves the root reservation out, like df" {
 
 test "diskInfo copes with an empty filesystem" {
     try testing.expectEqual(@as(f64, 0), diskInfo(0, 0, 0, 4096).pct);
+}
+
+test "netLine gives each direction its own unit" {
+    var buf: [256]u8 = undefined;
+    try testing.expectEqualStrings(
+        "  NET   ^ 500 MB    v 50.0 GB   (total)",
+        netLine(&buf, .{ .tx_mb = 500, .rx_mb = 51200 }),
+    );
+    try testing.expectEqualStrings(
+        "  NET   ^ 2.0 GB    v 300 MB   (total)",
+        netLine(&buf, .{ .tx_mb = 2048, .rx_mb = 300 }),
+    );
+}
+
+test "fmtMb switches to GB at 1024 MB" {
+    var buf: [32]u8 = undefined;
+    try testing.expectEqualStrings("1023 MB", fmtMb(&buf, 1023));
+    try testing.expectEqualStrings("1.0 GB", fmtMb(&buf, 1024));
 }
 
 fn testProc(mem_mb: f64) Process {
