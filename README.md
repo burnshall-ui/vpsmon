@@ -81,7 +81,9 @@ conversion, ISO timestamp parsing, the minimal JSON scraper, the token
 formatter's unit thresholds and the command line — plus the disk arithmetic,
 the top-process selection, the PNG encoder and the renderer's buffer sizing.
 Everything else reads `/proc`, which CI checks by
-running the binary and asserting the dashboard still contains every section.
+running the binary and asserting the dashboard still contains every section,
+then rendering a PNG and checking it with Python's zlib rather than with the
+encoder that wrote it.
 
 ## Usage
 
@@ -179,8 +181,10 @@ vpsmon/
 ├── SKILL.md               # OpenClaw agent skill definition
 ├── assets/
 │   └── screenshot.png     # Example output
-├── .github/workflows/
-│   └── ci.yml             # fmt check, build, tests, smoke test
+├── .github/
+│   ├── workflows/
+│   │   └── ci.yml         # fmt check, build, tests, smoke tests
+│   └── check_png.py       # Independent PNG check for CI
 ├── build.zig              # Zig build configuration
 ├── build.zig.zon          # Zig package manifest
 ├── LICENSE                # MIT

@@ -42,3 +42,8 @@ jobs:
           for section in CPU RAM DISK NET LOAD UPTIME; do
             echo "$out" | grep -q "$section" || { echo "missing section: $section" >&2; exit 1; }
           done
+
+      - name: PNG smoke test
+        run: |
+          ./zig-out/bin/vpsmon "$RUNNER_TEMP/vpsmon.png"
+          python3 .github/check_png.py "$RUNNER_TEMP/vpsmon.png"
