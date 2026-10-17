@@ -128,9 +128,19 @@ fn getDisk() !DiskInfo {
     var s: Statfs = undefined;
     if (statfs("/", &s) != 0) return error.StatfsFailed;
     const bs: u64 = if (builtin.os.tag == .macos) s.f_bsize else @intCast(s.f_frsize);
-    const tg = @as(f64, @floatFromInt(s.f_blocks)) * @as(f64, @floatFromInt(bs)) / (1024 * 1024 * 1024);
-    const fg = @as(f64, @floatFromInt(s.f_bavail)) * @as(f64, @floatFromInt(bs)) / (1024 * 1024 * 1024);
-    return DiskInfo{ .used_gb = tg - fg, .total_gb = tg, .pct = if (tg > 0) (tg - fg) / tg * 100 else 0 };
+    return diskInfo(s.f_blocks, s.f_bfree, s.f_bavail, bs);
+}
+
+// Same arithmetic as df: the blocks reserved for root are neither used nor
+// available, so used is blocks - bfree and the percentage is taken against
+// used + avail rather than the raw size.
+fn diskInfo(blocks: u64, bfree: u64, bavail: u64, block_size: u64) DiskInfo {
+    const gib = 1024 * 1024 * 1024;
+    const bs: f64 = @floatFromInt(block_size);
+    const used = @as(f64, @floatFromInt(blocks -| bfree)) * bs / gib;
+    const avail = @as(f64, @floatFromInt(bavail)) * bs / gib;
+    const total = @as(f64, @floatFromInt(blocks)) * bs / gib;
+    return DiskInfo{ .used_gb = used, .total_gb = total, .pct = if (used + avail > 0) used / (used + avail) * 100 else 0 };
 }
 
 fn getNet(io: std.Io) !NetInfo {
@@ -531,6 +541,20 @@ test "daysFromCivil matches the proleptic Gregorian calendar" {
 test "daysFromCivil handles dates before the epoch" {
     try testing.expectEqual(@as(i64, -1), daysFromCivil(1969, 12, 31));
     try testing.expect(daysFromCivil(1900, 1, 1) < 0);
+}
+
+test "diskInfo leaves the root reservation out, like df" {
+    // 1000 blocks, 300 free, of which 50 are reserved for root.
+    const d = diskInfo(1000, 300, 250, 4096);
+    const gib = 1024.0 * 1024.0 * 1024.0;
+    try testing.expectApproxEqAbs(@as(f64, 700.0 * 4096.0 / gib), d.used_gb, 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 1000.0 * 4096.0 / gib), d.total_gb, 1e-12);
+    // 700 / (700 + 250), not 750 / 1000.
+    try testing.expectApproxEqAbs(@as(f64, 700.0 / 950.0 * 100.0), d.pct, 1e-9);
+}
+
+test "diskInfo copes with an empty filesystem" {
+    try testing.expectEqual(@as(f64, 0), diskInfo(0, 0, 0, 4096).pct);
 }
 
 test "parseIsoEpoch reads the timestamps OpenClaw writes" {
