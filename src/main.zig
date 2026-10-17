@@ -143,17 +143,50 @@ fn diskInfo(blocks: u64, bfree: u64, bavail: u64, block_size: u64) DiskInfo {
     return DiskInfo{ .used_gb = used, .total_gb = total, .pct = if (used + avail > 0) used / (used + avail) * 100 else 0 };
 }
 
+// Only interfaces with a device behind them count. The virtual ones carry
+// traffic that also crosses a physical NIC -- tailscale0 sees it decrypted,
+// eth0 again as WireGuard UDP; docker0 and the veths are bridged out the same
+// way -- so adding them counts the same bytes twice.
+const PhysicalIfaces = struct {
+    io: std.Io,
+
+    fn keep(self: PhysicalIfaces, name: []const u8) bool {
+        var pb: [128]u8 = undefined;
+        const p = fmt.bufPrint(&pb, "/sys/class/net/{s}/device", .{name}) catch return false;
+        std.Io.Dir.accessAbsolute(self.io, p, .{}) catch return false;
+        return true;
+    }
+};
+
+const AllButLoopback = struct {
+    fn keep(_: AllButLoopback, name: []const u8) bool {
+        return !mem.eql(u8, name, "lo");
+    }
+};
+
 fn getNet(io: std.Io) !NetInfo {
     var buf: [8192]u8 = undefined;
     const data = try readFile(io, "/proc/net/dev", &buf);
+    const physical = sumNetDev(data, PhysicalIfaces{ .io = io });
+    if (physical.ifaces > 0) return physical.info;
+    // No NIC with a device, as inside a container where eth0 is a veth:
+    // better a count that may include some doubles than none at all.
+    return sumNetDev(data, AllButLoopback{}).info;
+}
+
+const NetSum = struct { info: NetInfo, ifaces: usize };
+
+// Sums the /proc/net/dev counters of every interface `filter.keep` accepts.
+fn sumNetDev(data: []const u8, filter: anytype) NetSum {
     var rx: u64 = 0;
     var tx: u64 = 0;
+    var ifaces: usize = 0;
     var lines = mem.splitScalar(u8, data, '\n');
     while (lines.next()) |line| {
         const t = mem.trim(u8, line, " \t");
-        if (mem.startsWith(u8, t, "lo:")) continue;
         const colon = mem.indexOf(u8, t, ":") orelse continue;
         if (colon == 0) continue;
+        if (!filter.keep(t[0..colon])) continue;
         var f = mem.tokenizeScalar(u8, mem.trim(u8, t[colon + 1 ..], " "), ' ');
         const rs = f.next() orelse continue;
         var sk: usize = 0;
@@ -161,8 +194,12 @@ fn getNet(io: std.Io) !NetInfo {
         const ts = f.next() orelse continue;
         rx += fmt.parseUnsigned(u64, rs, 10) catch 0;
         tx += fmt.parseUnsigned(u64, ts, 10) catch 0;
+        ifaces += 1;
     }
-    return NetInfo{ .rx_mb = @as(f64, @floatFromInt(rx)) / (1024 * 1024), .tx_mb = @as(f64, @floatFromInt(tx)) / (1024 * 1024) };
+    return NetSum{
+        .info = NetInfo{ .rx_mb = @as(f64, @floatFromInt(rx)) / (1024 * 1024), .tx_mb = @as(f64, @floatFromInt(tx)) / (1024 * 1024) },
+        .ifaces = ifaces,
+    };
 }
 
 fn getLoad(io: std.Io) !LoadInfo {
@@ -576,6 +613,45 @@ test "diskInfo leaves the root reservation out, like df" {
 
 test "diskInfo copes with an empty filesystem" {
     try testing.expectEqual(@as(f64, 0), diskInfo(0, 0, 0, 4096).pct);
+}
+
+// The header lines and a loopback, a NIC and a tunnel, as on siggiclaw.
+const test_net_dev =
+    \\Inter-|   Receive                                                |  Transmit
+    \\ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    \\    lo: 1048576   22446    0    0    0     0          0         0 1048576   22446    0    0    0     0       0          0
+    \\  eth0:10485760   98164    0    0    0     0          0         0 2097152   73269    0    0    0     0       0          0
+    \\tailscale0: 3145728     316    0    0    0     0          0         0  4194304     324    0    0    0     0       0          0
+;
+
+const OnlyIfaces = struct {
+    names: []const []const u8,
+
+    fn keep(self: OnlyIfaces, name: []const u8) bool {
+        for (self.names) |n| if (mem.eql(u8, n, name)) return true;
+        return false;
+    }
+};
+
+test "sumNetDev counts only the interfaces the filter keeps" {
+    // eth0 alone: 10 MiB in, 2 MiB out. Note "eth0:10485760" -- the counter
+    // runs straight into the colon once it is wide enough.
+    const s = sumNetDev(test_net_dev, OnlyIfaces{ .names = &.{"eth0"} });
+    try testing.expectEqual(@as(usize, 1), s.ifaces);
+    try testing.expectEqual(@as(f64, 10), s.info.rx_mb);
+    try testing.expectEqual(@as(f64, 2), s.info.tx_mb);
+}
+
+test "sumNetDev fallback leaves out only lo" {
+    const s = sumNetDev(test_net_dev, AllButLoopback{});
+    try testing.expectEqual(@as(usize, 2), s.ifaces);
+    try testing.expectEqual(@as(f64, 13), s.info.rx_mb);
+    try testing.expectEqual(@as(f64, 6), s.info.tx_mb);
+}
+
+test "sumNetDev with nothing kept reports zero interfaces" {
+    const s = sumNetDev(test_net_dev, OnlyIfaces{ .names = &.{} });
+    try testing.expectEqual(@as(usize, 0), s.ifaces);
 }
 
 test "netLine gives each direction its own unit" {

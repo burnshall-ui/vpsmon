@@ -28,7 +28,7 @@ A fast, zero-dependency VPS system monitor written in **Zig**. Reads metrics dir
 - **CPU** usage with visual bar (sampled over a 500 ms window)
 - **RAM** usage (used / total)
 - **Disk** usage (used / total)
-- **Network** traffic (total RX/TX)
+- **Network** traffic (total RX/TX since boot, physical interfaces only)
 - **Load** average (1/5/15 min)
 - **Uptime** (days, hours, minutes)
 - **Top 5 processes** by memory usage (user-space only, no kernel threads)
@@ -196,7 +196,7 @@ vpsmon reads Linux system metrics directly from the `/proc` filesystem:
 | CPU | `/proc/stat` |
 | Memory | `/proc/meminfo` |
 | Disk | `statfs("/")` |
-| Network | `/proc/net/dev` |
+| Network | `/proc/net/dev`, filtered to interfaces with `/sys/class/net/<if>/device` |
 | Load | `/proc/loadavg` |
 | Uptime | `/proc/uptime` |
 | Processes | `/proc/[pid]/stat` + `/proc/[pid]/cmdline` |
